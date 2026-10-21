@@ -58,4 +58,3 @@ See [VALIDATION.md](VALIDATION.md) for the scope and limits of the first release
 ## License
 
 This project is available under the MIT License. See [LICENSE](LICENSE).
-
