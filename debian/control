@@ -1,0 +1,13 @@
+Source: login-startup
+Section: utils
+Priority: optional
+Maintainer: Local Desktop Tools <local@example.invalid>
+Build-Depends: debhelper-compat (= 13), meson, ninja-build, libgtk-4-dev (>= 4.16), libadwaita-1-dev (>= 1.6), libglib2.0-dev (>= 2.74)
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+
+Package: login-startup
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, xdg-utils, xdg-terminal-exec
+Description: Native GTK4 login startup manager
+ Manage current-user desktop autostart entries without running files on add.

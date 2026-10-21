@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=你的登录启动项
+Name[en]=Your Login Startup Items
+Comment=Manage files that start when you sign in to your desktop
+Comment[zh_CN]=管理登录桌面后自动启动的文件
+Exec=login-startup
+Icon=io.github.local.LoginStartup
+Terminal=false
+Categories=Utility;
+StartupNotify=true
