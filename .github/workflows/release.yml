@@ -1,0 +1,80 @@
+name: Build and publish release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: (github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release: v')) || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            message="$(jq -r '.head_commit.message' "$GITHUB_EVENT_PATH")"
+            version="${message#release: v}"
+            [[ "$message" == "release: v$version" ]]
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential meson ninja-build libgtk-4-dev libadwaita-1-dev desktop-file-utils dpkg-dev gh
+
+      - name: Build and test Debian package
+        run: sh packaging/build-deb.sh
+
+      - name: Create source archives and checksums
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          prefix="your-login-startup-items-$VERSION/"
+          mkdir -p release-assets
+          git archive --format=zip --prefix="$prefix" "$GITHUB_SHA" > "release-assets/your-login-startup-items-$VERSION-source.zip"
+          git archive --format=tar.gz --prefix="$prefix" "$GITHUB_SHA" > "release-assets/your-login-startup-items-$VERSION-source.tar.gz"
+          cp "dist/login-startup_${VERSION}_amd64.deb" "release-assets/login-startup_${VERSION}_amd64.deb"
+          (cd release-assets && sha256sum *.zip *.tar.gz *.deb > SHA256SUMS.txt)
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          cat > release-notes.md <<EOF
+          # Your Login Startup Items $VERSION
+
+          Native GTK4 and Libadwaita application for managing per-user GNOME login startup entries on Ubuntu 26.04 LTS (amd64).
+
+          ## Downloads
+
+          - Debian package: login-startup_${VERSION}_amd64.deb
+          - Source archive: ZIP and tar.gz
+          - SHA-256 checksums: SHA256SUMS.txt
+
+          Build requirements, usage, and validation limits are documented in the source archives.
+          EOF
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release-assets/* --clobber
+          else
+            gh release create "$tag" release-assets/* --title "Your Login Startup Items $VERSION" --notes-file release-notes.md
+          fi
