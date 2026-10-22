@@ -8,8 +8,18 @@
 #define LS_KIND "X-LoginStartup-Kind"
 #define LS_ARGS "X-LoginStartup-Arguments"
 #define LS_ID "X-LoginStartup-Id"
+#define LS_WATCHDOG "X-LoginStartup-Watchdog"
+#define LS_WATCHDOG_AUTOSTART "login-startup-watchdog.desktop"
 
 typedef struct { char *path; GKeyFile *key; } LsItem;
+typedef struct {
+    char *path;
+    char *desktop_id;
+    char *name;
+    char *package;
+    GIcon *icon;
+    gboolean shortcut_exists;
+} LsInstalledApp;
 char *ls_directory(void);
 char *ls_id_for_source(const char *source);
 gboolean ls_valid_id(const char *id);
@@ -25,5 +35,17 @@ char **ls_argv(GKeyFile *key, GError **error);
 GSubprocess *ls_spawn(GKeyFile *key, GError **error);
 gboolean ls_run(GKeyFile *key, GError **error);
 gboolean ls_trial(GKeyFile *key, GError **error);
+gboolean ls_watchdog_supported(GKeyFile *key);
+gboolean ls_watchdog_set(const char *id, gboolean enabled, GError **error);
+gboolean ls_watchdog_sync_autostart(GError **error);
+gboolean ls_watchdog_autostart_enabled(void);
+gboolean ls_watchdog_is_running(void);
+int ls_watchdog_run(void);
 void ls_item_free(LsItem *item);
+GPtrArray *ls_installed_apps(GError **error);
+gboolean ls_create_desktop_shortcut(const LsInstalledApp *app, GError **error);
+gboolean ls_desktop_shortcut_exists(const LsInstalledApp *app);
+gboolean ls_create_desktop_shortcut_in(const char *source, const char *desktop_id,
+                                       const char *desktop_dir, GError **error);
+void ls_installed_app_free(LsInstalledApp *app);
 int ls_ui(int argc, char **argv);

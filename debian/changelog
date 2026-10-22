@@ -1,3 +1,16 @@
+login-startup (0.2.1) unstable; urgency=medium
+
+  * Leave all installed-app shortcut choices unchecked by default.
+
+ -- Local Desktop Tools <local@example.invalid>  Thu, 22 Oct 2026 20:10:00 +0800
+
+login-startup (0.2.0) unstable; urgency=medium
+
+  * Add a searchable picker for installed deb applications and create desktop shortcuts in batches.
+  * Add a login-started watchdog for supported autostart programs with restart backoff.
+
+ -- Local Desktop Tools <local@example.invalid>  Thu, 22 Oct 2026 18:03:00 +0800
+
 login-startup (0.1.0) unstable; urgency=medium
 
   * Initial local Ubuntu 26.04.1 desktop prototype.

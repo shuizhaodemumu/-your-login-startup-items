@@ -3,6 +3,7 @@
 #include <glib/gstdio.h>
 #include <unistd.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static char *root, *self;
 static char *new_file(const char *name, const char *content, int mode) {
@@ -144,6 +145,96 @@ static void remove_preserves_source(void) {
     g_autoptr(GKeyFile) key = draft(source, NULL); saved(key); removed(key);
     g_autofree char *data = NULL; g_assert_true(g_file_get_contents(source, &data, NULL, NULL)); g_assert_cmpstr(data, ==, "keep-original");
 }
+static void desktop_shortcut_copy(void) {
+    g_autofree char *source = new_file("installed-app.desktop",
+        "[Desktop Entry]\nType=Application\nName=Fixture App\nName[zh_CN]=测试应用\n"
+        "Exec=/usr/bin/true --literal %U\nIcon=utilities-terminal\nTerminal=false\n",
+        0644);
+    g_autofree char *desktop = g_build_filename(root, "Desktop", NULL);
+    g_assert_cmpint(g_mkdir_with_parents(desktop, 0700), ==, 0);
+    g_autoptr(GError) error = NULL;
+    g_assert_true(ls_create_desktop_shortcut_in(source, "fixture.desktop", desktop, &error));
+    g_assert_no_error(error);
+    g_autofree char *destination = g_build_filename(desktop, "login-startup-shortcut-fixture.desktop", NULL);
+    g_assert_true(g_file_test(destination, G_FILE_TEST_IS_REGULAR));
+    struct stat st;
+    g_assert_cmpint(g_stat(destination, &st), ==, 0);
+    g_assert_true((st.st_mode & 0111) != 0);
+    g_autoptr(GKeyFile) copied = g_key_file_new();
+    g_assert_true(g_key_file_load_from_file(copied, destination, G_KEY_FILE_KEEP_TRANSLATIONS, &error));
+    g_assert_no_error(error);
+    g_autofree char *exec = keystr(copied, "Exec");
+    g_autofree char *localized = g_key_file_get_string(copied, LS_GROUP, "Name[zh_CN]", NULL);
+    g_assert_cmpstr(exec, ==, "/usr/bin/true --literal %U");
+    g_assert_cmpstr(localized, ==, "测试应用");
+    g_assert_false(ls_create_desktop_shortcut_in(source, "fixture.desktop", desktop, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_EXISTS);
+    g_clear_error(&error);
+    g_autofree char *original = NULL;
+    g_assert_true(g_file_get_contents(source, &original, NULL, &error));
+    g_assert_no_error(error);
+    g_assert_nonnull(strstr(original, "Fixture App"));
+}
+static void watchdog_setup_and_autostart(void) {
+    g_autofree char *program = g_build_filename(root, "watch-me", NULL);
+    g_autofree char *binary = NULL; gsize binary_len = 0;
+    g_assert_true(g_file_get_contents(self, &binary, &binary_len, NULL));
+    g_assert_true(g_file_set_contents(program, binary, binary_len, NULL));
+    g_assert_cmpint(g_chmod(program, 0700), ==, 0);
+    g_autoptr(GKeyFile) key = draft(program, NULL);
+    g_assert_true(ls_watchdog_supported(key));
+    g_key_file_set_boolean(key, LS_GROUP, LS_WATCHDOG, TRUE);
+    saved(key);
+    g_autoptr(GError) error = NULL;
+    g_assert_true(ls_watchdog_sync_autostart(&error));
+    g_assert_no_error(error);
+    g_autofree char *autostart = g_build_filename(root, "config", "autostart", LS_WATCHDOG_AUTOSTART, NULL);
+    g_autoptr(GKeyFile) entry = g_key_file_new();
+    g_assert_true(g_key_file_load_from_file(entry, autostart, G_KEY_FILE_NONE, &error));
+    g_assert_no_error(error);
+    g_assert_true(g_key_file_get_boolean(entry, LS_GROUP, "X-LoginStartup-Watchdog-Owner", NULL));
+    g_autofree char *exec = keystr(entry, "Exec");
+    g_assert_true(g_str_has_suffix(exec, "/login-startup --watchdog"));
+    g_autofree char *id = keystr(key, LS_ID);
+    g_assert_true(ls_enable(id, FALSE, &error));
+    g_assert_no_error(error);
+    g_assert_false(g_file_test(autostart, G_FILE_TEST_EXISTS));
+    removed(key);
+}
+static void watchdog_desktop_eligibility(void) {
+    g_autofree char *direct = new_file("direct.desktop",
+        "[Desktop Entry]\nType=Application\nName=Direct\nExec=/usr/bin/true\n", 0600);
+    g_autoptr(GKeyFile) key = draft(direct, NULL);
+    g_assert_true(ls_watchdog_supported(key));
+    g_autofree char *wrapped = new_file("wrapped.desktop",
+        "[Desktop Entry]\nType=Application\nName=Wrapped\nExec=/usr/bin/env /usr/bin/true\n", 0600);
+    g_autoptr(GKeyFile) wrapped_key = draft(wrapped, NULL);
+    g_assert_false(ls_watchdog_supported(wrapped_key));
+    g_autofree char *script = new_file("script.sh", "#!/bin/sh\nsleep 1\n", 0700);
+    g_autoptr(GKeyFile) script_key = draft(script, NULL);
+    g_assert_false(ls_watchdog_supported(script_key));
+}
+static void watchdog_duplicate_target_rejected(void) {
+    g_autofree char *program = g_build_filename(root, "same-app", NULL);
+    g_autofree char *binary = NULL; gsize binary_len = 0;
+    g_assert_true(g_file_get_contents(self, &binary, &binary_len, NULL));
+    g_assert_true(g_file_set_contents(program, binary, binary_len, NULL));
+    g_assert_cmpint(g_chmod(program, 0700), ==, 0);
+    g_autoptr(GKeyFile) direct = draft(program, NULL);
+    g_key_file_set_boolean(direct, LS_GROUP, LS_WATCHDOG, TRUE);
+    saved(direct);
+    g_autofree char *desktop_path = g_build_filename(root, "same-app.desktop", NULL);
+    g_autofree char *desktop_text = g_strdup_printf("[Desktop Entry]\nType=Application\nName=Same app\nExec=%s\n", program);
+    g_assert_true(g_file_set_contents(desktop_path, desktop_text, -1, NULL));
+    g_autoptr(GKeyFile) desktop = draft(desktop_path, NULL);
+    saved(desktop);
+    g_autofree char *desktop_id = keystr(desktop, LS_ID);
+    g_autoptr(GError) error = NULL;
+    g_assert_false(ls_watchdog_set(desktop_id, TRUE, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    g_assert_nonnull(strstr(error->message, "另一个看门狗"));
+    removed(direct); removed(desktop);
+}
 int main(int argc, char **argv) {
     if (argc >= 3 && !strcmp(argv[1], "--record")) {
         g_autoptr(GKeyFile) key = g_key_file_new();
@@ -154,6 +245,14 @@ int main(int argc, char **argv) {
     root = g_dir_make_tmp("login-startup-test-XXXXXX", NULL); g_assert_nonnull(root);
     g_autofree char *config = g_build_filename(root, "config", NULL); g_setenv("XDG_CONFIG_HOME", config, TRUE);
     self = g_file_read_link("/proc/self/exe", NULL);
+    g_autofree char *old_path = g_strdup(g_getenv("PATH"));
+    g_autofree char *fake_binary = g_build_filename(root, "login-startup", NULL);
+    g_autofree char *binary = NULL; gsize binary_len = 0;
+    g_assert_true(g_file_get_contents(self, &binary, &binary_len, NULL));
+    g_assert_true(g_file_set_contents(fake_binary, binary, binary_len, NULL));
+    g_assert_cmpint(g_chmod(fake_binary, 0700), ==, 0);
+    g_autofree char *test_path = g_strdup_printf("%s:%s", root, old_path ? old_path : "");
+    g_setenv("PATH", test_path, TRUE);
     g_test_init(&argc, &argv, NULL);
     g_test_add_func("/startup/no-implicit-run", no_implicit_run);
     g_test_add_func("/startup/duplicates", duplicates);
@@ -167,7 +266,12 @@ int main(int argc, char **argv) {
     g_test_add_func("/startup/program-permission", program_permission);
     g_test_add_func("/startup/missing-interpreter", missing_interpreter);
     g_test_add_func("/startup/remove-preserves-source", remove_preserves_source);
+    g_test_add_func("/startup/desktop-shortcut-copy", desktop_shortcut_copy);
+    g_test_add_func("/startup/watchdog-setup-and-autostart", watchdog_setup_and_autostart);
+    g_test_add_func("/startup/watchdog-desktop-eligibility", watchdog_desktop_eligibility);
+    g_test_add_func("/startup/watchdog-duplicate-target-rejected", watchdog_duplicate_target_rejected);
     int result = g_test_run();
     g_print("Isolated test fixtures: %s\n", root);
+    if (old_path) g_setenv("PATH", old_path, TRUE); else g_unsetenv("PATH");
     g_free(self); g_free(root); return result;
 }

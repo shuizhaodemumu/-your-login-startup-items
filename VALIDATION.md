@@ -1,22 +1,22 @@
 # Validation
 
-The 0.1.0 package was built, installed, and exercised in an Ubuntu 26.04.1 LTS GNOME virtual machine. The checks below describe the tested scope; they do not establish compatibility with every desktop, distribution, file type, or application.
+Version 0.2.1 was built and installed in an Ubuntu 26.04.1 LTS amd64 VM using GCC 15.2.0, Meson 1.10.1, GTK 4.22.4, and Libadwaita 1.9.1. `dpkg-query` and `login-startup --version` both reported 0.2.1.
 
 ## Checked
 
-- Release build with GCC 15.2.0, Meson 1.10.1, GTK 4.22.4, and Libadwaita 1.9.1; the final build completed without compiler warnings.
-- Twelve core tests covering argument and path round-trips (including Unicode and shell metacharacters), working directories, add-without-run behavior, idempotent updates, scripts and interpreters, imported desktop settings, missing files, ownership checks, symlinks, and source-file preservation.
-- Installed command-line flows for add, trial, enable, disable, update, remove, desktop import, and read-only inspection, using an isolated XDG configuration directory.
-- GTK window startup in an Xvfb and D-Bus smoke run with GLib warnings treated as fatal.
-- A real GNOME session flow covering native file selection, add-without-run, explicit trial, edit, disable, cancel and confirm delete, and source-file preservation.
-- Login-session behavior: an enabled fixture ran once after login; after disabling it and logging out and back in, it did not run again.
-- Debian package metadata, desktop entry syntax, dynamic-library dependencies, and installed package state.
+- Release build completed without compiler warnings; all three Meson tests passed: core behavior, installed deb GUI app discovery, and watchdog integration.
+- Core tests cover launch configuration, scripts and desktop files, path and argument handling, shortcut copy safety, watchdog eligibility and self-start configuration, duplicate targets, and preservation of source files.
+- The installed-app scan test ran against the VM's dpkg-owned launchers; a manual CLI scan listed 31 visible installed GUI applications.
+- The watchdog integration test verified restart behavior for a directly launched executable and a simple `.desktop` launcher, then confirmed that disabling the watchdog stops relaunches.
+- GTK4/Libadwaita window startup passed under Xvfb with fatal warnings enabled.
+- Debian package assembly completed, `desktop-file-validate` passed, and `dpkg-deb -I` confirmed package `login-startup` version `0.2.1`, architecture `amd64`, and generated runtime dependencies.
+- The installed-app picker defaults to zero selections; the UI explains that users choose the apps they want.
 
 ## Not covered
 
-- File-manager mouse drag-and-drop into the application window.
-- Real application behavior for every document type and default handler.
-- Every shebang/interpreter combination, missing terminal emulator, external concurrent configuration changes, and all application-specific outcomes.
-- Dark theme, other screen sizes, other desktop environments, older Ubuntu releases, or other distributions.
+- Creating shortcuts through actual UI clicks, search and multi-select interaction, or testing on multiple desktop environments.
+- Real GNOME login-session testing of the new watchdog helper's autostart lifecycle.
+- Timing verification of every watchdog backoff interval, prolonged retry behavior, or all unsupported launcher types.
+- Compatibility outside Ubuntu 26.04 LTS amd64, dark theme, accessibility review, or sanitizers.
 
-The release build was not instrumented with AddressSanitizer, MemorySanitizer, or UndefinedBehaviorSanitizer. A successful launch does not prove that a target application completed its intended work.
+The watchdog deliberately supports direct executables and `.desktop` launchers whose `Exec` command can be mapped to a process. It rejects shell/script wrappers where process identity cannot be tracked reliably. Closing a watched app manually will relaunch it until the watchdog is disabled.

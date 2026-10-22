@@ -2,10 +2,19 @@
 #include <string.h>
 
 int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "--watchdog")) return ls_watchdog_run();
     if (argc < 2 || !strcmp(argv[1], "--ui")) return ls_ui(argc > 1 ? 1 : argc, argv);
     g_autoptr(GError) error = NULL;
-    if (!strcmp(argv[1], "--version")) { g_print("login-startup 0.1.0\n"); return 0; }
-    if (!strcmp(argv[1], "--list")) {
+    if (!strcmp(argv[1], "--version")) { g_print("login-startup 0.2.1\n"); return 0; }
+    if (!strcmp(argv[1], "--list-installed-apps")) {
+        g_autoptr(GPtrArray) apps = ls_installed_apps(&error);
+        if (apps) for (guint i = 0; i < apps->len; ++i) {
+            LsInstalledApp *app = g_ptr_array_index(apps, i);
+            g_print("%s\t%s\t%s\n", app->desktop_id, app->package, app->name);
+        }
+    } else if (argc == 3 && (!strcmp(argv[1], "--watchdog-enable") || !strcmp(argv[1], "--watchdog-disable"))) {
+        ls_watchdog_set(argv[2], !strcmp(argv[1], "--watchdog-enable"), &error);
+    } else if (!strcmp(argv[1], "--list")) {
         g_autoptr(GPtrArray) items = ls_list(&error);
         if (items) for (guint i = 0; i < items->len; ++i) {
             LsItem *item = g_ptr_array_index(items, i);
@@ -40,7 +49,7 @@ int main(int argc, char **argv) {
             ls_item_free(item);
         }
     } else {
-        g_printerr("用法：login-startup [--ui | --list | --add 文件 [--name 名称] [--args 参数] [--cwd 目录] [--terminal] | --inspect 文件 | --enable ID | --disable ID | --remove ID | --try ID]\n");
+        g_printerr("用法：login-startup [--ui | --watchdog | --list | --list-installed-apps | --add 文件 [--name 名称] [--args 参数] [--cwd 目录] [--terminal] | --inspect 文件 | --enable ID | --disable ID | --watchdog-enable ID | --watchdog-disable ID | --remove ID | --try ID]\n");
         return 2;
     }
     if (error) { g_printerr("%s\n", error->message); return 1; }
