@@ -7,8 +7,10 @@ typedef struct {
     GtkWindow *window;
     AdwToastOverlay *overlay;
     GtkEntry *source, *name, *cwd, *args;
-    GtkCheckButton *terminal;
-    GtkCheckButton *watchdog;
+    GtkSpinButton *delay;
+    GtkCheckButton *terminal, *silent;
+    gboolean terminal_editable;
+    GtkCheckButton *watchdog, *keep_above;
     GtkLabel *type_hint, *count, *helper_status;
     GtkButton *save;
     GtkListBox *list;
@@ -69,10 +71,18 @@ static void clear_form(Ui *ui) {
     GtkEntry *entries[] = { ui->source, ui->name, ui->cwd, ui->args };
     for (guint i = 0; i < G_N_ELEMENTS(entries); ++i) gtk_editable_set_text(GTK_EDITABLE(entries[i]), "");
     gtk_check_button_set_active(ui->terminal, FALSE);
+    gtk_check_button_set_active(ui->silent, FALSE);
+    gtk_spin_button_set_value(ui->delay, 0);
+    ui->terminal_editable = TRUE;
     gtk_check_button_set_active(ui->watchdog, FALSE);
+    gtk_check_button_set_active(ui->keep_above, FALSE);
     gtk_widget_set_sensitive(GTK_WIDGET(ui->args), TRUE);
     gtk_widget_set_sensitive(GTK_WIDGET(ui->terminal), TRUE);
     gtk_widget_set_sensitive(GTK_WIDGET(ui->watchdog), FALSE);
+    gtk_widget_set_sensitive(GTK_WIDGET(ui->keep_above), FALSE);
+    gtk_widget_set_tooltip_text(GTK_WIDGET(ui->keep_above), ls_keep_above_supported()
+        ? "对 X11 / XWayland 窗口持续请求置顶；Wayland 原生窗口由桌面环境隔离，无法控制"
+        : "当前构建未包含 X11 窗口控制支持");
     gtk_widget_set_tooltip_text(GTK_WIDGET(ui->watchdog), "支持普通可执行程序、可识别进程的应用快捷方式，以及可执行的 .run 启动器");
     gtk_label_set_text(ui->type_hint, "登录桌面后启动，不会在添加时运行文件。");
     gtk_button_set_label(ui->save, "添加自启动");
@@ -94,14 +104,26 @@ static void fill(Ui *ui, GKeyFile *key) {
     }
     gtk_editable_set_text(GTK_EDITABLE(ui->args), args->str);
     gtk_check_button_set_active(ui->terminal, g_key_file_get_boolean(key, LS_GROUP, "Terminal", NULL));
+    gint delay = g_key_file_get_integer(key, LS_GROUP, LS_DELAY, NULL);
+    gtk_spin_button_set_value(ui->delay, CLAMP(delay, 0, 3600));
+    gtk_check_button_set_active(ui->silent, g_key_file_get_boolean(key, LS_GROUP, LS_SILENT, NULL));
     g_autofree char *kind = g_key_file_get_string(key, LS_GROUP, LS_KIND, NULL);
     gboolean desktop = !g_strcmp0(kind, "desktop");
+    ui->terminal_editable = !desktop;
+    gtk_widget_set_sensitive(GTK_WIDGET(ui->terminal), ui->terminal_editable &&
+        !gtk_check_button_get_active(ui->silent));
     gboolean watchdog_supported = ls_watchdog_supported(key);
     gtk_check_button_set_active(ui->watchdog, watchdog_supported && g_key_file_get_boolean(key, LS_GROUP, LS_WATCHDOG, NULL));
     gboolean auto_start_enabled = !g_key_file_get_boolean(key, LS_GROUP, "Hidden", NULL);
     gtk_widget_set_sensitive(GTK_WIDGET(ui->watchdog), watchdog_supported && auto_start_enabled);
     gtk_widget_set_tooltip_text(GTK_WIDGET(ui->watchdog), !watchdog_supported ? "支持普通可执行程序、可识别进程的应用快捷方式，以及有执行权限的 .run 启动器" : auto_start_enabled ? "进程退出后由后台助手重新启动" : "先启用登录自启动，再启用看门狗");
     gtk_widget_set_sensitive(GTK_WIDGET(ui->args), !desktop);
+    gtk_check_button_set_active(ui->keep_above, g_key_file_get_boolean(key, LS_GROUP, LS_KEEP_ABOVE, NULL));
+    gtk_widget_set_sensitive(GTK_WIDGET(ui->keep_above), ls_keep_above_supported() && ls_watchdog_supported(key));
+    gtk_widget_set_tooltip_text(GTK_WIDGET(ui->keep_above), !ls_keep_above_supported()
+        ? "当前构建未包含 X11 窗口控制支持"
+        : !ls_watchdog_supported(key) ? "仅支持可识别进程的可执行程序和应用快捷方式"
+        : "后台助手会持续将匹配到的 X11 / XWayland 窗口置顶；Wayland 原生窗口不可控");
     gtk_widget_set_sensitive(GTK_WIDGET(ui->terminal), !desktop);
     gtk_label_set_text(ui->type_hint, desktop ? "应用快捷方式：保留原命令、参数、图标与终端设置。" : !g_strcmp0(kind, "script") ? "脚本：识别解释器；添加不会执行脚本。" : !g_strcmp0(kind, "document") ? "普通文档：登录后交给默认应用打开。" : "可执行程序：登录后按指定参数启动。");
 }
@@ -110,6 +132,11 @@ static void select_path(Ui *ui, const char *path) {
     g_autoptr(GKeyFile) draft = ls_draft(path, NULL, NULL, NULL, FALSE, &error);
     if (!draft) { toast(ui, error->message); return; }
     fill(ui, draft);
+}
+static void silent_toggled(GtkCheckButton *button, gpointer data) {
+    Ui *ui = data;
+    gtk_widget_set_sensitive(GTK_WIDGET(ui->terminal),
+        ui->terminal_editable && !gtk_check_button_get_active(button));
 }
 static void file_selected(GObject *object, GAsyncResult *result, gpointer data) {
     Ui *ui = data;
@@ -152,21 +179,38 @@ static void save_item(GtkButton *button, gpointer data) {
     if (!key) { toast(ui, error->message); return; }
     g_autofree char *id = g_key_file_get_string(key, LS_GROUP, LS_ID, NULL);
     gboolean watchdog_requested = gtk_check_button_get_active(ui->watchdog);
+    gboolean keep_above_requested = gtk_check_button_get_active(ui->keep_above);
     LsItem *old = ls_load_id(id, NULL);
     gboolean updated = old != NULL;
     if (old) {
         gboolean hidden = g_key_file_get_boolean(old->key, LS_GROUP, "Hidden", NULL);
         g_key_file_set_boolean(key, LS_GROUP, "Hidden", hidden);
         g_key_file_set_boolean(key, LS_GROUP, "X-GNOME-Autostart-enabled", !hidden);
+        const char *option_keys[] = { LS_SILENT, LS_SILENT_TERMINAL_PRESENT,
+            LS_SILENT_TERMINAL_VALUE, LS_SILENT_NOTIFY_PRESENT,
+            LS_SILENT_NOTIFY_VALUE, NULL };
+        for (guint i = 0; option_keys[i]; ++i) {
+            if (g_key_file_has_key(old->key, LS_GROUP, option_keys[i], NULL))
+                g_key_file_set_boolean(key, LS_GROUP, option_keys[i],
+                    g_key_file_get_boolean(old->key, LS_GROUP, option_keys[i], NULL));
+            else
+                g_key_file_remove_key(key, LS_GROUP, option_keys[i], NULL);
+        }
         ls_item_free(old);
+    }
+    if (!ls_set_startup_options(key, (guint)gtk_spin_button_get_value_as_int(ui->delay),
+                                gtk_check_button_get_active(ui->silent), &error)) {
+        toast(ui, error->message); return;
     }
     /* Enable through ls_watchdog_set only after saving the base item; this keeps duplicate-watch rejection atomic. */
     gboolean hidden = g_key_file_get_boolean(key, LS_GROUP, "Hidden", NULL);
     g_key_file_set_boolean(key, LS_GROUP, LS_WATCHDOG, watchdog_requested && hidden);
+    ls_set_keep_above(key, keep_above_requested);
     if (!ls_save(key, &error)) { toast(ui, error->message); return; }
     if (watchdog_requested && !hidden) {
         if (!ls_watchdog_set(id, TRUE, &error)) { toast(ui, error->message); refresh(ui); return; }
-    } else if (!ls_watchdog_sync_autostart(&error)) { toast(ui, error->message); refresh(ui); return; }
+    }
+    if (!ls_keep_above_set(id, keep_above_requested, &error)) { toast(ui, error->message); refresh(ui); return; }
     if (ui->editing_id && strcmp(ui->editing_id, id) && !ls_remove(ui->editing_id, &error)) {
         toast(ui, "新路径已保存，但旧启动项未能移除，请检查列表");
     } else toast(ui, updated ? "已更新启动配置，未运行文件" : "已添加，下次登录桌面时启动");
@@ -264,12 +308,14 @@ static void refresh(Ui *ui) {
         g_autofree char *path = g_key_file_get_string(item->key, LS_GROUP, LS_SOURCE, NULL);
         gboolean active = !g_key_file_get_boolean(item->key, LS_GROUP, "Hidden", NULL);
         gboolean watchdog_enabled = g_key_file_get_boolean(item->key, LS_GROUP, LS_WATCHDOG, NULL);
+        gboolean keep_above_enabled = g_key_file_get_boolean(item->key, LS_GROUP, LS_KEEP_ABOVE, NULL);
         if (active) enabled++;
         if (active && watchdog_enabled && ls_watchdog_supported(item->key)) watched++;
         g_autoptr(GError) validation = NULL;
         gboolean valid = ls_validate(item->key, &validation);
         const char *watchdog_state = watchdog_enabled ? (active ? "看门狗已启用" : "看门狗已暂停") : "看门狗关闭";
-        g_autofree char *subtitle = g_strdup_printf("%s · %s · %s", valid ? (active ? "已启用" : "已禁用") : "失效，请编辑修复", watchdog_state, path);
+        const char *pin_state = keep_above_enabled ? "窗口置顶已启用" : "窗口置顶关闭";
+        g_autofree char *subtitle = g_strdup_printf("%s · %s · %s · %s", valid ? (active ? "已启用" : "已禁用") : "失效，请编辑修复", watchdog_state, pin_state, path);
         adw_preferences_row_set_title(ADW_PREFERENCES_ROW(widget), name ? name : "未命名");
         adw_action_row_set_subtitle(ADW_ACTION_ROW(widget), subtitle);
         adw_action_row_set_subtitle_lines(ADW_ACTION_ROW(widget), 2);
@@ -592,10 +638,27 @@ static void activate(GApplication *application, gpointer data) {
     gtk_box_append(GTK_BOX(advanced_box), text("空格分隔参数；含空格的参数用引号包裹。", "caption"));
     ui->terminal = GTK_CHECK_BUTTON(gtk_check_button_new_with_label("在终端中运行"));
     gtk_box_append(GTK_BOX(advanced_box), GTK_WIDGET(ui->terminal));
+    gtk_box_append(GTK_BOX(advanced_box), text("登录后延迟启动（秒）", "caption-heading"));
+    GtkAdjustment *delay_adjustment = gtk_adjustment_new(0, 0, 3600, 1, 10, 0);
+    ui->delay = GTK_SPIN_BUTTON(gtk_spin_button_new(delay_adjustment, 1, 0));
+    gtk_spin_button_set_numeric(ui->delay, TRUE);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(ui->delay), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                   "登录后延迟启动秒数，范围 0 到 3600", -1);
+    gtk_box_append(GTK_BOX(advanced_box), GTK_WIDGET(ui->delay));
+    ui->silent = GTK_CHECK_BUTTON(gtk_check_button_new_with_label("静默启动（不显示终端和启动通知）"));
+    g_signal_connect(ui->silent, "toggled", G_CALLBACK(silent_toggled), ui);
+    gtk_box_append(GTK_BOX(advanced_box), GTK_WIDGET(ui->silent));
+    gtk_box_append(GTK_BOX(advanced_box), text("不会隐藏程序自己的窗口或其主动弹出的对话框。", "caption"));
     ui->watchdog = GTK_CHECK_BUTTON(gtk_check_button_new_with_label("启用看门狗：程序退出后自动重启"));
     gtk_widget_set_sensitive(GTK_WIDGET(ui->watchdog), FALSE);
     gtk_widget_set_tooltip_text(GTK_WIDGET(ui->watchdog), "支持普通可执行程序、可识别进程的应用快捷方式，以及可执行的 .run 启动器");
     gtk_box_append(GTK_BOX(advanced_box), GTK_WIDGET(ui->watchdog));
+    ui->keep_above = GTK_CHECK_BUTTON(gtk_check_button_new_with_label("窗口置顶：持续保持在其他普通窗口上方"));
+    gtk_widget_set_sensitive(GTK_WIDGET(ui->keep_above), FALSE);
+    gtk_widget_set_tooltip_text(GTK_WIDGET(ui->keep_above), ls_keep_above_supported()
+        ? "适用于 X11 / XWayland 窗口；Wayland 原生窗口无法由其他应用强制置顶"
+        : "当前构建未包含 X11 窗口控制支持");
+    gtk_box_append(GTK_BOX(advanced_box), GTK_WIDGET(ui->keep_above));
     gtk_expander_set_child(GTK_EXPANDER(advanced), advanced_box);
     gtk_box_append(GTK_BOX(form), advanced);
     ui->save = GTK_BUTTON(gtk_button_new_with_label("添加自启动"));
@@ -627,7 +690,7 @@ static void activate(GApplication *application, gpointer data) {
     gtk_widget_set_vexpand(ui->empty, TRUE);
     gtk_widget_add_css_class(ui->empty, "card");
     gtk_box_append(GTK_BOX(right), ui->empty);
-    GtkWidget *note = text("仅管理本软件创建的启动项 · 添加不会运行文件\n启用看门狗后，助手会在登录时启动后台监控 · 删除配置不会删除原文件", "dim-label");
+    GtkWidget *note = text("仅管理本软件创建的启动项 · 添加不会运行文件\n启用看门狗或窗口置顶后，后台助手会在登录时启动 · 删除配置不会删除原文件", "dim-label");
     gtk_widget_set_margin_top(note, 12);
     gtk_box_append(GTK_BOX(right), note);
     GtkCssProvider *css = gtk_css_provider_new();

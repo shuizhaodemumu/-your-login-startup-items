@@ -81,7 +81,24 @@ static void desktop_preserved(void) {
     g_assert_cmpstr(custom, ==, "keep-me");
     g_assert_true(g_key_file_get_boolean(key, LS_GROUP, "Terminal", NULL));
     g_autofree char *localized = g_key_file_get_string(key, LS_GROUP, "Name[zh_CN]", NULL); g_assert_cmpstr(localized, ==, "原应用");
-    saved(key); removed(key);
+    g_autoptr(GError) error = NULL;
+    g_assert_true(ls_set_startup_options(key, 30, TRUE, &error));
+    g_assert_no_error(error);
+    saved(key);
+    g_autofree char *id = keystr(key, LS_ID);
+    LsItem *read = ls_load_id(id, &error);
+    g_assert_no_error(error); g_assert_nonnull(read);
+    g_assert_cmpint(g_key_file_get_integer(read->key, LS_GROUP, LS_DELAY, NULL), ==, 30);
+    g_assert_false(g_key_file_get_boolean(read->key, LS_GROUP, "Terminal", NULL));
+    g_assert_false(g_key_file_get_boolean(read->key, LS_GROUP, "StartupNotify", NULL));
+    g_assert_true(ls_set_startup_options(read->key, 0, FALSE, &error));
+    g_assert_no_error(error);
+    g_assert_true(g_key_file_get_boolean(read->key, LS_GROUP, "Terminal", NULL));
+    g_assert_false(g_key_file_has_key(read->key, LS_GROUP, "StartupNotify", NULL));
+    g_assert_true(ls_save(read->key, &error));
+    g_assert_no_error(error);
+    ls_item_free(read);
+    removed(key);
 }
 static void missing_and_toggle(void) {
     g_autofree char *source = new_file("will-move.txt", "temporary", 0600);
@@ -201,6 +218,36 @@ static void watchdog_setup_and_autostart(void) {
     g_assert_false(g_file_test(autostart, G_FILE_TEST_EXISTS));
     removed(key);
 }
+static void keep_above_setup_and_autostart(void) {
+    g_autofree char *program = g_build_filename(root, "pin-me", NULL);
+    g_autofree char *binary = NULL; gsize binary_len = 0;
+    g_assert_true(g_file_get_contents(self, &binary, &binary_len, NULL));
+    g_assert_true(g_file_set_contents(program, binary, binary_len, NULL));
+    g_assert_cmpint(g_chmod(program, 0700), ==, 0);
+    g_autoptr(GKeyFile) key = draft(program, NULL);
+    g_assert_true(ls_keep_above_supported());
+    g_assert_true(ls_watchdog_supported(key));
+    g_autofree char *id = keystr(key, LS_ID);
+    g_key_file_set_boolean(key, LS_GROUP, "Hidden", TRUE);
+    saved(key);
+    g_assert_true(ls_keep_above_set(id, TRUE, NULL));
+    g_autofree char *autostart = g_build_filename(root, "config", "autostart", LS_WATCHDOG_AUTOSTART, NULL);
+    LsItem *inactive = ls_load_id(id, NULL);
+    g_key_file_set_boolean(inactive->key, LS_GROUP, "Hidden", FALSE);
+    saved(inactive->key);
+    ls_item_free(inactive);
+    g_autoptr(GError) error = NULL;
+    g_assert_true(ls_watchdog_sync_autostart(&error));
+    g_assert_no_error(error);
+    g_assert_true(g_file_test(autostart, G_FILE_TEST_EXISTS));
+    LsItem *loaded = ls_load_id(id, NULL);
+    g_assert_nonnull(loaded);
+    g_assert_true(g_key_file_get_boolean(loaded->key, LS_GROUP, LS_KEEP_ABOVE, NULL));
+    ls_item_free(loaded);
+    g_assert_true(ls_keep_above_set(id, FALSE, NULL));
+    g_assert_false(g_file_test(autostart, G_FILE_TEST_EXISTS));
+    removed(key);
+}
 static void watchdog_desktop_eligibility(void) {
     g_autofree char *direct = new_file("direct.desktop",
         "[Desktop Entry]\nType=Application\nName=Direct\nExec=/usr/bin/true\n", 0600);
@@ -219,6 +266,43 @@ static void watchdog_run_eligibility(void) {
     g_autoptr(GKeyFile) key = draft(run, NULL);
     g_assert_cmpstr(keystr(key, LS_KIND), ==, "program");
     g_assert_true(ls_watchdog_supported(key));
+}
+static void startup_options_roundtrip(void) {
+    g_autoptr(GKeyFile) key = g_key_file_new();
+    g_key_file_set_string(key, LS_GROUP, "Type", "Application");
+    g_key_file_set_boolean(key, LS_GROUP, "Terminal", TRUE);
+    g_key_file_set_boolean(key, LS_GROUP, "StartupNotify", TRUE);
+    g_autoptr(GError) error = NULL;
+    g_assert_true(ls_set_startup_options(key, 45, TRUE, &error));
+    g_assert_no_error(error);
+    g_assert_cmpint(g_key_file_get_integer(key, LS_GROUP, LS_DELAY, NULL), ==, 45);
+    g_assert_true(g_key_file_get_boolean(key, LS_GROUP, LS_SILENT, NULL));
+    g_assert_false(g_key_file_get_boolean(key, LS_GROUP, "Terminal", NULL));
+    g_assert_false(g_key_file_get_boolean(key, LS_GROUP, "StartupNotify", NULL));
+    g_assert_true(g_key_file_get_boolean(key, LS_GROUP, LS_SILENT_TERMINAL_VALUE, NULL));
+    g_assert_true(g_key_file_get_boolean(key, LS_GROUP, LS_SILENT_NOTIFY_VALUE, NULL));
+    g_assert_true(ls_set_startup_options(key, 0, FALSE, &error));
+    g_assert_no_error(error);
+    g_assert_cmpint(g_key_file_get_integer(key, LS_GROUP, LS_DELAY, NULL), ==, 0);
+    g_assert_false(g_key_file_get_boolean(key, LS_GROUP, LS_SILENT, NULL));
+    g_assert_true(g_key_file_get_boolean(key, LS_GROUP, "Terminal", NULL));
+    g_assert_true(g_key_file_get_boolean(key, LS_GROUP, "StartupNotify", NULL));
+    g_assert_false(g_key_file_has_key(key, LS_GROUP, LS_SILENT_TERMINAL_PRESENT, NULL));
+    g_assert_false(g_key_file_has_key(key, LS_GROUP, LS_SILENT_NOTIFY_PRESENT, NULL));
+    g_autofree char *serialized = g_key_file_to_data(key, NULL, NULL);
+    g_assert_nonnull(strstr(serialized, "X-GNOME-Autostart-Delay=0"));
+    g_assert_false(ls_set_startup_options(key, 3601, FALSE, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    g_clear_error(&error);
+
+    g_autoptr(GKeyFile) absent = g_key_file_new();
+    g_key_file_set_string(absent, LS_GROUP, "Type", "Application");
+    g_assert_true(ls_set_startup_options(absent, 3600, TRUE, &error));
+    g_assert_no_error(error);
+    g_assert_true(ls_set_startup_options(absent, 0, FALSE, &error));
+    g_assert_no_error(error);
+    g_assert_false(g_key_file_has_key(absent, LS_GROUP, "Terminal", NULL));
+    g_assert_false(g_key_file_has_key(absent, LS_GROUP, "StartupNotify", NULL));
 }
 static void watchdog_duplicate_target_rejected(void) {
     g_autofree char *program = g_build_filename(root, "same-app", NULL);
@@ -274,8 +358,10 @@ int main(int argc, char **argv) {
     g_test_add_func("/startup/remove-preserves-source", remove_preserves_source);
     g_test_add_func("/startup/desktop-shortcut-copy", desktop_shortcut_copy);
     g_test_add_func("/startup/watchdog-setup-and-autostart", watchdog_setup_and_autostart);
+    g_test_add_func("/startup/keep-above-setup-and-autostart", keep_above_setup_and_autostart);
     g_test_add_func("/startup/watchdog-desktop-eligibility", watchdog_desktop_eligibility);
     g_test_add_func("/startup/watchdog-run-eligibility", watchdog_run_eligibility);
+    g_test_add_func("/startup/startup-options-roundtrip", startup_options_roundtrip);
     g_test_add_func("/startup/watchdog-duplicate-target-rejected", watchdog_duplicate_target_rejected);
     int result = g_test_run();
     g_print("Isolated test fixtures: %s\n", root);

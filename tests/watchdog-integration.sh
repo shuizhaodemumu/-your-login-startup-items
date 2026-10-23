@@ -65,6 +65,30 @@ sleep 4
 test "$(wc -l < "$marker")" = "$before"
 "$app" --remove "$desktop_id"
 
+pin_id=$("$app" --add "$program")
+pin_entry="$tmp/config/autostart/login-startup-$pin_id.desktop"
+printf 'X-LoginStartup-KeepAbove=true\n' >> "$pin_entry"
+"$app" --enable "$pin_id"
+test -f "$tmp/config/autostart/login-startup-watchdog.desktop"
+lock="$tmp/cache/login-startup/watchdog.lock"
+i=0
+while flock -n "$lock" -c true && [ "$i" -lt 10 ]; do
+    sleep 1
+    i=$((i + 1))
+done
+if flock -n "$lock" -c true; then
+    echo 'background helper did not start for a pin-only item' >&2
+    exit 1
+fi
+"$app" --disable "$pin_id"
+i=0
+while ! flock -n "$lock" -c true && [ "$i" -lt 10 ]; do
+    sleep 1
+    i=$((i + 1))
+done
+test ! -f "$tmp/config/autostart/login-startup-watchdog.desktop"
+"$app" --remove "$pin_id"
+
 run_source="$tmp/watched.run"
 run_marker="$tmp/run-restarts"
 run_stable_copy="$tmp/stable-copy.run"
@@ -118,4 +142,4 @@ kill "$(cat "$run_pid")"
 sleep 4
 test "$(wc -l < "$run_marker")" = "$before"
 "$app" --remove "$run_id"
-echo 'PASS: watchdog auto-started a missing process again and stopped relaunching after disable.'
+echo 'PASS: watchdog restart, pin-only helper lifecycle, and background cleanup.'

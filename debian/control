@@ -2,7 +2,7 @@ Source: login-startup
 Section: utils
 Priority: optional
 Maintainer: Local Desktop Tools <local@example.invalid>
-Build-Depends: debhelper-compat (= 13), build-essential, meson, ninja-build, libgtk-4-dev, libadwaita-1-dev
+Build-Depends: debhelper-compat (= 13), build-essential, meson, ninja-build, libgtk-4-dev, libadwaita-1-dev, libx11-dev
 Standards-Version: 4.7.0
 
 Package: login-startup

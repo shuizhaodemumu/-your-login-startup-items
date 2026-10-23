@@ -36,7 +36,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential meson ninja-build libgtk-4-dev libadwaita-1-dev desktop-file-utils dpkg-dev gh
+          sudo apt-get install -y build-essential meson ninja-build libgtk-4-dev libadwaita-1-dev libx11-dev desktop-file-utils dpkg-dev gh
 
       - name: Build and test Debian package
         run: sh packaging/build-deb.sh
@@ -60,21 +60,13 @@ jobs:
         run: |
           set -euo pipefail
           tag="v$VERSION"
-          cat > release-notes.md <<EOF
-          # Your Login Startup Items $VERSION
-
-          Native GTK4 and Libadwaita application for managing per-user GNOME login startup entries on Ubuntu 26.04 LTS (amd64).
-
-          ## Downloads
-
-          - Debian package: login-startup_${VERSION}_amd64.deb
-          - Source archive: ZIP and tar.gz
-          - SHA-256 checksums: SHA256SUMS.txt
-
-          Build requirements, usage, and validation limits are documented in the source archives.
-          EOF
+          cat "RELEASE_NOTES_${VERSION}.zh-CN.md" > release-notes.md
+          printf '\n---\n\n' >> release-notes.md
+          cat "RELEASE_NOTES_${VERSION}.en.md" >> release-notes.md
+          printf '\n## Downloads\n\n- Debian package: `login-startup_%s_amd64.deb`\n- Source archives: ZIP and tar.gz\n- SHA-256 checksums: `SHA256SUMS.txt`\n' "$VERSION" >> release-notes.md
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" release-assets/* --clobber
           else
             gh release create "$tag" release-assets/* --title "Your Login Startup Items $VERSION" --notes-file release-notes.md
           fi
+

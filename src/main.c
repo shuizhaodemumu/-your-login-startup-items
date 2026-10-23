@@ -5,7 +5,7 @@ int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--watchdog")) return ls_watchdog_run();
     if (argc < 2 || !strcmp(argv[1], "--ui")) return ls_ui(argc > 1 ? 1 : argc, argv);
     g_autoptr(GError) error = NULL;
-    if (!strcmp(argv[1], "--version")) { g_print("login-startup 0.2.2\n"); return 0; }
+    if (!strcmp(argv[1], "--version")) { g_print("login-startup 0.2.4\n"); return 0; }
     if (!strcmp(argv[1], "--list-installed-apps")) {
         g_autoptr(GPtrArray) apps = ls_installed_apps(&error);
         if (apps) for (guint i = 0; i < apps->len; ++i) {

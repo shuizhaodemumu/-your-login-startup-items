@@ -1,3 +1,16 @@
+login-startup (0.2.4) unstable; urgency=medium
+
+  * Add per-item keep-above support for X11 and XWayland application windows.
+  * Reuse the login background helper to maintain the requested window state.
+
+ -- Local Desktop Tools <local@example.invalid>  Fri, 23 Oct 2026 16:00:00 +0800
+
+login-startup (0.2.3) unstable; urgency=medium
+
+  * Add configurable GNOME login startup delay and silent launch options.
+
+ -- Local Desktop Tools <local@example.invalid>  Fri, 23 Oct 2026 14:00:00 +0800
+
 login-startup (0.2.2) unstable; urgency=medium
 
   * Support watchdog monitoring for executable .run application launchers.

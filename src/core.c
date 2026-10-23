@@ -12,6 +12,10 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef HAVE_X11
+#include <X11/Xatom.h>
+#include <X11/Xlib.h>
+#endif
 
 static gboolean fail(GError **error, const char *message) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, message);
@@ -181,6 +185,57 @@ GKeyFile *ls_draft(const char *source, const char *name, const char *args, const
     if (!ls_validate(key, error)) return NULL;
     return g_steal_pointer(&key);
 }
+static void save_original_boolean(GKeyFile *key, const char *name,
+                                  const char *present_name, const char *value_name) {
+    gboolean present = g_key_file_has_key(key, LS_GROUP, name, NULL);
+    g_key_file_set_boolean(key, LS_GROUP, present_name, present);
+    if (present)
+        g_key_file_set_boolean(key, LS_GROUP, value_name,
+                               g_key_file_get_boolean(key, LS_GROUP, name, NULL));
+}
+static void restore_original_boolean(GKeyFile *key, const char *name,
+                                     const char *present_name, const char *value_name) {
+    if (g_key_file_get_boolean(key, LS_GROUP, present_name, NULL))
+        g_key_file_set_boolean(key, LS_GROUP, name,
+                               g_key_file_get_boolean(key, LS_GROUP, value_name, NULL));
+    else
+        g_key_file_remove_key(key, LS_GROUP, name, NULL);
+    g_key_file_remove_key(key, LS_GROUP, present_name, NULL);
+    g_key_file_remove_key(key, LS_GROUP, value_name, NULL);
+}
+gboolean ls_set_startup_options(GKeyFile *key, guint delay_seconds, gboolean silent, GError **error) {
+    if (!key || delay_seconds > 3600)
+        return fail(error, "启动延迟必须在 0 到 3600 秒之间");
+    gboolean was_silent = g_key_file_get_boolean(key, LS_GROUP, LS_SILENT, NULL);
+    if (silent && !was_silent) {
+        save_original_boolean(key, "Terminal", LS_SILENT_TERMINAL_PRESENT,
+                              LS_SILENT_TERMINAL_VALUE);
+        save_original_boolean(key, "StartupNotify", LS_SILENT_NOTIFY_PRESENT,
+                              LS_SILENT_NOTIFY_VALUE);
+    } else if (!silent && was_silent) {
+        restore_original_boolean(key, "Terminal", LS_SILENT_TERMINAL_PRESENT,
+                                 LS_SILENT_TERMINAL_VALUE);
+        restore_original_boolean(key, "StartupNotify", LS_SILENT_NOTIFY_PRESENT,
+                                 LS_SILENT_NOTIFY_VALUE);
+    }
+    g_key_file_set_integer(key, LS_GROUP, LS_DELAY, (gint)delay_seconds);
+    g_key_file_set_boolean(key, LS_GROUP, LS_SILENT, silent);
+    if (silent) {
+        g_key_file_set_boolean(key, LS_GROUP, "Terminal", FALSE);
+        g_key_file_set_boolean(key, LS_GROUP, "StartupNotify", FALSE);
+    }
+    return TRUE;
+}
+void ls_set_keep_above(GKeyFile *key, gboolean keep_above) {
+    if (key) g_key_file_set_boolean(key, LS_GROUP, LS_KEEP_ABOVE, keep_above);
+}
+gboolean ls_keep_above_supported(void) {
+#ifdef HAVE_X11
+    return TRUE;
+#else
+    return FALSE;
+#endif
+}
 gboolean ls_save(GKeyFile *key, GError **error) {
     g_autofree char *id = value(key, LS_ID);
     g_autofree char *source = value(key, LS_SOURCE);
@@ -208,7 +263,8 @@ gboolean ls_enable(const char *id, gboolean enabled, GError **error) {
         g_key_file_set_boolean(item->key, LS_GROUP, "X-GNOME-Autostart-enabled", enabled);
         result = ls_save(item->key, error);
         if (result && !ls_watchdog_sync_autostart(error)) result = FALSE;
-        if (result && enabled && g_key_file_get_boolean(item->key, LS_GROUP, LS_WATCHDOG, NULL))
+        if (result && enabled && (g_key_file_get_boolean(item->key, LS_GROUP, LS_WATCHDOG, NULL) ||
+                                  g_key_file_get_boolean(item->key, LS_GROUP, LS_KEEP_ABOVE, NULL)))
             result = start_watchdog_daemon(error);
     }
     ls_item_free(item); return result;
@@ -413,8 +469,9 @@ gboolean ls_watchdog_sync_autostart(GError **error) {
     for (guint i = 0; i < items->len; ++i) {
         LsItem *item = g_ptr_array_index(items, i);
         if (!g_key_file_get_boolean(item->key, LS_GROUP, "Hidden", NULL) &&
-            g_key_file_get_boolean(item->key, LS_GROUP, LS_WATCHDOG, NULL) &&
-            ls_watchdog_supported(item->key)) { needed = TRUE; break; }
+            ((g_key_file_get_boolean(item->key, LS_GROUP, LS_WATCHDOG, NULL) &&
+              ls_watchdog_supported(item->key)) ||
+             g_key_file_get_boolean(item->key, LS_GROUP, LS_KEEP_ABOVE, NULL))) { needed = TRUE; break; }
     }
     g_autofree char *path = watchdog_autostart_path();
     struct stat st;
@@ -450,8 +507,8 @@ gboolean ls_watchdog_sync_autostart(GError **error) {
     }
     g_autoptr(GKeyFile) desktop = g_key_file_new();
     g_key_file_set_string(desktop, LS_GROUP, "Type", "Application");
-    g_key_file_set_string(desktop, LS_GROUP, "Name", "登录自启助手看门狗");
-    g_key_file_set_string(desktop, LS_GROUP, "Comment", "监控已启用看门狗的登录启动项");
+    g_key_file_set_string(desktop, LS_GROUP, "Name", "登录自启助手后台助手");
+    g_key_file_set_string(desktop, LS_GROUP, "Comment", "维护登录启动项的看门狗和窗口置顶设置");
     g_autofree char *exec = g_strdup_printf("%s --watchdog", binary);
     g_key_file_set_string(desktop, LS_GROUP, "Exec", exec);
     g_key_file_set_string(desktop, LS_GROUP, "Icon", "io.github.local.LoginStartup");
@@ -546,6 +603,24 @@ gboolean ls_watchdog_set(const char *id, gboolean enabled, GError **error) {
     return TRUE;
 }
 
+gboolean ls_keep_above_set(const char *id, gboolean enabled, GError **error) {
+    if (enabled && !ls_keep_above_supported())
+        return fail(error, "此版本未编译 X11 窗口置顶支持");
+    LsItem *item = ls_load_id(id, error);
+    if (!item) return FALSE;
+    if (enabled && !ls_watchdog_supported(item->key)) {
+        ls_item_free(item);
+        return fail(error, "窗口置顶支持可识别进程的可执行程序和应用快捷方式");
+    }
+    ls_set_keep_above(item->key, enabled);
+    gboolean saved = ls_save(item->key, error);
+    gboolean active = !g_key_file_get_boolean(item->key, LS_GROUP, "Hidden", NULL);
+    ls_item_free(item);
+    if (!saved || !ls_watchdog_sync_autostart(error)) return FALSE;
+    if (enabled && active && !start_watchdog_daemon(error)) return FALSE;
+    return TRUE;
+}
+
 typedef struct {
     gboolean running;
     gboolean launching;
@@ -612,6 +687,104 @@ static gboolean process_matches(GKeyFile *key) {
     return FALSE;
 }
 
+static gboolean process_pid_matches(GKeyFile *key, pid_t pid) {
+    if (pid <= 1 || pid == getpid()) return FALSE;
+    g_autofree char *source = value(key, LS_SOURCE);
+    g_autofree char *kind = value(key, LS_KIND);
+    g_autofree char *executable = resolved_watchdog_executable(key);
+    g_autofree char *process_dir = g_strdup_printf("/proc/%ld", (long)pid);
+    struct stat st;
+    if (!source || !kind || !executable || g_stat(process_dir, &st) != 0 || st.st_uid != getuid()) return FALSE;
+    g_autofree char *exe_link = g_build_filename(process_dir, "exe", NULL);
+    char target[PATH_MAX + 1];
+    ssize_t length = readlink(exe_link, target, PATH_MAX);
+    if (length > 0) {
+        target[length] = '\0';
+        if (!strcmp(target, executable)) return TRUE;
+    }
+    if (!g_strcmp0(kind, "program")) {
+        g_autofree char *canonical = g_canonicalize_filename(source, NULL);
+        g_autofree char *cmdline = g_build_filename(process_dir, "cmdline", NULL);
+        g_autofree char *contents = NULL;
+        gsize size = 0;
+        if (g_file_get_contents(cmdline, &contents, &size, NULL)) {
+            for (gsize i = 0; i < size;) {
+                const char *arg = contents + i;
+                gsize arg_len = strnlen(arg, size - i);
+                if (arg_len == strlen(canonical) && !memcmp(arg, canonical, arg_len)) return TRUE;
+                i += arg_len + 1;
+            }
+        }
+        if (g_str_has_suffix(source, ".run") && process_has_env_path(process_dir, source, canonical)) return TRUE;
+    }
+    return FALSE;
+}
+
+static void keep_matching_windows_above(GKeyFile *key) {
+#ifdef HAVE_X11
+    Display *display = XOpenDisplay(NULL);
+    if (!display) return;
+    Window root = DefaultRootWindow(display);
+    Atom clients_atom = XInternAtom(display, "_NET_CLIENT_LIST", True);
+    Atom pid_atom = XInternAtom(display, "_NET_WM_PID", True);
+    Atom state_atom = XInternAtom(display, "_NET_WM_STATE", True);
+    Atom above_atom = XInternAtom(display, "_NET_WM_STATE_ABOVE", False);
+    if (clients_atom == None || pid_atom == None || state_atom == None) {
+        XCloseDisplay(display);
+        return;
+    }
+    Atom actual_type;
+    int actual_format;
+    unsigned long count = 0, remaining = 0;
+    unsigned char *data = NULL;
+    if (XGetWindowProperty(display, root, clients_atom, 0, 4096, False, XA_WINDOW,
+            &actual_type, &actual_format, &count, &remaining, &data) == Success &&
+        data && actual_type == XA_WINDOW && actual_format == 32) {
+        Window *windows = (Window *)data;
+        for (unsigned long i = 0; i < count; ++i) {
+            unsigned char *pid_data = NULL;
+            unsigned long pid_count = 0;
+            if (XGetWindowProperty(display, windows[i], pid_atom, 0, 1, False, XA_CARDINAL,
+                    &actual_type, &actual_format, &pid_count, &remaining, &pid_data) != Success ||
+                !pid_data || actual_format != 32 || pid_count != 1) {
+                if (pid_data) XFree(pid_data);
+                continue;
+            }
+            unsigned long window_pid = *(unsigned long *)pid_data;
+            XFree(pid_data);
+            if (!process_pid_matches(key, (pid_t)window_pid)) continue;
+            unsigned char *states = NULL;
+            unsigned long state_count = 0;
+            if (XGetWindowProperty(display, windows[i], state_atom, 0, 64, False, XA_ATOM,
+                    &actual_type, &actual_format, &state_count, &remaining, &states) == Success &&
+                states && actual_format == 32) {
+                Atom *atoms = (Atom *)states;
+                gboolean already_above = FALSE;
+                for (unsigned long j = 0; j < state_count; ++j)
+                    if (atoms[j] == above_atom) { already_above = TRUE; break; }
+                XFree(states);
+                if (already_above) continue;
+            } else if (states) XFree(states);
+            XEvent event = {0};
+            event.xclient.type = ClientMessage;
+            event.xclient.window = windows[i];
+            event.xclient.message_type = state_atom;
+            event.xclient.format = 32;
+            event.xclient.data.l[0] = 1; /* _NET_WM_STATE_ADD */
+            event.xclient.data.l[1] = (long)above_atom;
+            event.xclient.data.l[2] = 0;
+            event.xclient.data.l[3] = 1; /* application source */
+            XSendEvent(display, root, False, SubstructureRedirectMask | SubstructureNotifyMask, &event);
+        }
+        XFree(data);
+    }
+    XFlush(display);
+    XCloseDisplay(display);
+#else
+    (void)key;
+#endif
+}
+
 static guint next_backoff(guint current) { return MIN(current ? current * 2 : 2, 60); }
 
 static gboolean watchdog_tick(gpointer data) {
@@ -627,9 +800,15 @@ static gboolean watchdog_tick(gpointer data) {
     gint64 now = g_get_monotonic_time();
     for (guint i = 0; i < items->len; ++i) {
         LsItem *item = g_ptr_array_index(items, i);
-        if (g_key_file_get_boolean(item->key, LS_GROUP, "Hidden", NULL) ||
-            !g_key_file_get_boolean(item->key, LS_GROUP, LS_WATCHDOG, NULL) ||
-            !ls_watchdog_supported(item->key)) continue;
+        if (g_key_file_get_boolean(item->key, LS_GROUP, "Hidden", NULL)) continue;
+        gboolean keep_above = g_key_file_get_boolean(item->key, LS_GROUP, LS_KEEP_ABOVE, NULL);
+        gboolean watchdog_enabled = g_key_file_get_boolean(item->key, LS_GROUP, LS_WATCHDOG, NULL) &&
+                                    ls_watchdog_supported(item->key);
+        if (keep_above) {
+            any = TRUE;
+            keep_matching_windows_above(item->key);
+        }
+        if (!watchdog_enabled) continue;
         any = TRUE;
         g_autofree char *id = value(item->key, LS_ID);
         g_autofree char *source = value(item->key, LS_SOURCE);
@@ -700,7 +879,18 @@ int ls_watchdog_run(void) {
     g_autofree char *lock_path = g_build_filename(cache, "watchdog.lock", NULL);
     int lock_fd = g_open(lock_path, O_CREAT | O_RDWR | O_CLOEXEC, 0600);
     if (lock_fd < 0) return 1;
-    if (flock(lock_fd, LOCK_EX | LOCK_NB) != 0) { close(lock_fd); return 0; }
+    gint64 lock_deadline = g_get_monotonic_time() + 3 * G_USEC_PER_SEC;
+    while (flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
+        if (errno != EWOULDBLOCK && errno != EAGAIN && errno != EINTR) {
+            close(lock_fd);
+            return 1;
+        }
+        if (g_get_monotonic_time() >= lock_deadline) {
+            close(lock_fd);
+            return 0;
+        }
+        g_usleep(100 * 1000);
+    }
     Watchdog watchdog = {0};
     watchdog.lock_fd = lock_fd;
     watchdog.loop = g_main_loop_new(NULL, FALSE);

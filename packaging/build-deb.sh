@@ -14,7 +14,7 @@ deps=$(dpkg-shlibdeps -O -e build/login-startup 2>/dev/null | sed -n 's/^shlibs:
 test -n "$deps"
 cat > "$stage/DEBIAN/control" <<EOF
 Package: login-startup
-Version: 0.2.2
+Version: 0.2.4
 Section: utils
 Priority: optional
 Architecture: $(dpkg --print-architecture)
@@ -27,7 +27,7 @@ Description: Native GTK4 login startup manager
 EOF
 desktop-file-validate "$stage/usr/share/applications/io.github.local.LoginStartup.desktop"
 find "$stage" -type d -exec chmod 755 {} +
-package_file="dist/login-startup_0.2.2_$(dpkg --print-architecture).deb"
+package_file="dist/login-startup_0.2.4_$(dpkg --print-architecture).deb"
 dpkg-deb --root-owner-group --build "$stage" "$package_file"
 dpkg-deb --info "$package_file"
 dpkg-deb --contents "$package_file"

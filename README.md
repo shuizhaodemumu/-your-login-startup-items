@@ -8,7 +8,8 @@ A native GTK4 desktop app for managing files that start automatically when you s
 
 - Add local programs, scripts, documents, and existing `.desktop` launchers to your per-user login startup list.
 - Enable, disable, edit, remove, and explicitly trial-run managed items.
-- Set a working directory, arguments, and terminal preference.
+- Set a working directory, arguments, a 0–3600 second login delay, and silent-launch preference.
+- Keep an individual startup item's X11 / XWayland window above ordinary windows while its background helper is running.
 - Preserve imported desktop launcher settings, including its original command, icon, terminal choice, and desktop restrictions.
 - Scan installed deb packages for visible graphical applications, then search, select, and create desktop shortcuts in batches.
 - Enable a watchdog for supported programs or launchers. A small background helper starts at login and relaunches watched processes after they exit, using exponential backoff from 2 seconds up to 60 seconds.
@@ -17,18 +18,22 @@ A native GTK4 desktop app for managing files that start automatically when you s
 
 The application scan covers visible launchers in `/usr/share/applications` that belong to an installed deb package. Libraries, command-line tools, and packages without a desktop launcher are not included. Watchdogs support directly executable programs, identifiable `.desktop` launchers, and executable `.run` launchers. A `.run` launcher must preserve its source path in a process argument or environment variable so the helper can identify it. Scripts and shell/`env` wrapper commands remain ineligible. Manually closing a watched program also triggers a restart. Turn off its watchdog to stop that behavior.
 
+Startup delay uses GNOME's autostart setting and is measured in seconds; 0 means no delay. Silent launch disables the terminal window and GNOME startup notification. It does not hide the target program's own window or suppress dialogs opened by the program itself.
+
+Window pinning uses X11 EWMH `_NET_WM_STATE_ABOVE` and works for X11 and XWayland windows. Wayland-native windows are isolated from other clients, so another application cannot generally inspect or force them above other windows. Fullscreen windows, lock screens, and desktop policy may still override the request.
+
 ## Requirements
 
 - Ubuntu 26.04 LTS with GNOME (amd64)
-- C compiler, Meson, Ninja, GTK4, Libadwaita, GLib, and Debian packaging tools to build
+- C compiler, Meson, Ninja, GTK4, Libadwaita, GLib, X11 development headers, and Debian packaging tools to build
 - `xdg-terminal-exec` for terminal trials
 
 ## Build a Debian package
 
 ```sh
-sudo apt install build-essential meson ninja-build libgtk-4-dev libadwaita-1-dev desktop-file-utils dpkg-dev
+sudo apt install build-essential meson ninja-build libgtk-4-dev libadwaita-1-dev libx11-dev desktop-file-utils dpkg-dev
 sh packaging/build-deb.sh
-sudo apt install ./dist/login-startup_0.2.2_amd64.deb
+sudo apt install ./dist/login-startup_0.2.4_amd64.deb
 ```
 
 Run `login-startup` or open **Your Login Startup Items** from the Applications menu. The package targets Ubuntu 26.04 LTS; binaries are not promised to work on older releases.
@@ -52,7 +57,7 @@ login-startup --watchdog-disable ITEM_ID
 
 ## Data and safety
 
-Managed entries are stored in `~/.config/autostart/`. When a watchdog is enabled, the app writes a separate per-user login entry for its background helper. It removes that entry after the last active watchdog is disabled. The helper identifies processes through `/proc`; it retries indefinitely with delays capped at 60 seconds. Remove managed entries before uninstalling the package. Imported `.desktop` launchers retain their own launch command.
+Managed entries are stored in `~/.config/autostart/`. When a watchdog or window pinning is enabled, the app writes a separate per-user login entry for its background helper. It removes that entry after the last active feature is disabled. The helper identifies processes through `/proc`; watchdog retries indefinitely with delays capped at 60 seconds. Remove managed entries before uninstalling the package. Imported `.desktop` launchers retain their own launch command.
 
 Created desktop shortcuts are executable copies of the original `.desktop` files in the configured user Desktop directory. Removing a shortcut does not uninstall its application.
 
@@ -67,3 +72,8 @@ See [VALIDATION.md](VALIDATION.md) for the scope and limits of the first release
 ## License
 
 This project is available under the MIT License. See [LICENSE](LICENSE).
+
+## Release notes
+
+See [0.2.4 release notes](RELEASE_NOTES_0.2.4.en.md).
+
