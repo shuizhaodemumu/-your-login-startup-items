@@ -15,7 +15,7 @@ A native GTK4 desktop app for managing files that start automatically when you s
 - Adding an item only reads its configuration and saves a launcher; it never runs the selected file.
 - Manage only entries owned by this application. Removing an entry does not delete its source file.
 
-The application scan covers visible launchers in `/usr/share/applications` that belong to an installed deb package. Libraries, command-line tools, and packages without a desktop launcher are not included. Watchdogs support directly executable programs and `.desktop` launchers whose command can be matched to a process; scripts, shell/`env` wrappers, and launchers whose process cannot be identified are excluded. Manually closing a watched program also triggers a restart. Turn off its watchdog to stop that behavior.
+The application scan covers visible launchers in `/usr/share/applications` that belong to an installed deb package. Libraries, command-line tools, and packages without a desktop launcher are not included. Watchdogs support directly executable programs, identifiable `.desktop` launchers, and executable `.run` launchers. A `.run` launcher must preserve its source path in a process argument or environment variable so the helper can identify it. Scripts and shell/`env` wrapper commands remain ineligible. Manually closing a watched program also triggers a restart. Turn off its watchdog to stop that behavior.
 
 ## Requirements
 
@@ -28,7 +28,7 @@ The application scan covers visible launchers in `/usr/share/applications` that 
 ```sh
 sudo apt install build-essential meson ninja-build libgtk-4-dev libadwaita-1-dev desktop-file-utils dpkg-dev
 sh packaging/build-deb.sh
-sudo apt install ./dist/login-startup_0.2.1_amd64.deb
+sudo apt install ./dist/login-startup_0.2.2_amd64.deb
 ```
 
 Run `login-startup` or open **Your Login Startup Items** from the Applications menu. The package targets Ubuntu 26.04 LTS; binaries are not promised to work on older releases.

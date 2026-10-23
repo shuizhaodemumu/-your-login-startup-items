@@ -73,7 +73,7 @@ static void clear_form(Ui *ui) {
     gtk_widget_set_sensitive(GTK_WIDGET(ui->args), TRUE);
     gtk_widget_set_sensitive(GTK_WIDGET(ui->terminal), TRUE);
     gtk_widget_set_sensitive(GTK_WIDGET(ui->watchdog), FALSE);
-    gtk_widget_set_tooltip_text(GTK_WIDGET(ui->watchdog), "看门狗支持可识别进程的直接启动程序和应用快捷方式");
+    gtk_widget_set_tooltip_text(GTK_WIDGET(ui->watchdog), "支持普通可执行程序、可识别进程的应用快捷方式，以及可执行的 .run 启动器");
     gtk_label_set_text(ui->type_hint, "登录桌面后启动，不会在添加时运行文件。");
     gtk_button_set_label(ui->save, "添加自启动");
 }
@@ -100,7 +100,7 @@ static void fill(Ui *ui, GKeyFile *key) {
     gtk_check_button_set_active(ui->watchdog, watchdog_supported && g_key_file_get_boolean(key, LS_GROUP, LS_WATCHDOG, NULL));
     gboolean auto_start_enabled = !g_key_file_get_boolean(key, LS_GROUP, "Hidden", NULL);
     gtk_widget_set_sensitive(GTK_WIDGET(ui->watchdog), watchdog_supported && auto_start_enabled);
-    gtk_widget_set_tooltip_text(GTK_WIDGET(ui->watchdog), !watchdog_supported ? "看门狗支持可识别进程的直接启动程序和应用快捷方式，不支持脚本或包装命令" : auto_start_enabled ? "进程退出后由后台助手重新启动" : "先启用登录自启动，再启用看门狗");
+    gtk_widget_set_tooltip_text(GTK_WIDGET(ui->watchdog), !watchdog_supported ? "支持普通可执行程序、可识别进程的应用快捷方式，以及有执行权限的 .run 启动器" : auto_start_enabled ? "进程退出后由后台助手重新启动" : "先启用登录自启动，再启用看门狗");
     gtk_widget_set_sensitive(GTK_WIDGET(ui->args), !desktop);
     gtk_widget_set_sensitive(GTK_WIDGET(ui->terminal), !desktop);
     gtk_label_set_text(ui->type_hint, desktop ? "应用快捷方式：保留原命令、参数、图标与终端设置。" : !g_strcmp0(kind, "script") ? "脚本：识别解释器；添加不会执行脚本。" : !g_strcmp0(kind, "document") ? "普通文档：登录后交给默认应用打开。" : "可执行程序：登录后按指定参数启动。");
@@ -300,7 +300,7 @@ static void refresh(Ui *ui) {
         gboolean watchdog_supported = ls_watchdog_supported(item->key);
         gtk_switch_set_active(GTK_SWITCH(watchdog_toggle), watchdog_enabled);
         gtk_widget_set_sensitive(watchdog_toggle, valid && active && watchdog_supported);
-        gtk_widget_set_tooltip_text(watchdog_toggle, watchdog_supported ? "程序退出后自动重启" : "仅支持可识别进程的直接启动程序和应用快捷方式");
+        gtk_widget_set_tooltip_text(watchdog_toggle, watchdog_supported ? "程序退出后自动重启" : "支持直接启动程序、可识别进程的应用快捷方式和可执行的 .run 启动器");
         gtk_accessible_update_property(GTK_ACCESSIBLE(watchdog_toggle), GTK_ACCESSIBLE_PROPERTY_LABEL, "程序退出后自动重启（看门狗）", -1);
         g_signal_connect(watchdog_toggle, "state-set", G_CALLBACK(watchdog_switched), row);
         gtk_box_append(GTK_BOX(actions), watchdog_toggle);
@@ -594,7 +594,7 @@ static void activate(GApplication *application, gpointer data) {
     gtk_box_append(GTK_BOX(advanced_box), GTK_WIDGET(ui->terminal));
     ui->watchdog = GTK_CHECK_BUTTON(gtk_check_button_new_with_label("启用看门狗：程序退出后自动重启"));
     gtk_widget_set_sensitive(GTK_WIDGET(ui->watchdog), FALSE);
-    gtk_widget_set_tooltip_text(GTK_WIDGET(ui->watchdog), "看门狗支持可识别进程的直接启动程序和应用快捷方式");
+    gtk_widget_set_tooltip_text(GTK_WIDGET(ui->watchdog), "支持普通可执行程序、可识别进程的应用快捷方式，以及可执行的 .run 启动器");
     gtk_box_append(GTK_BOX(advanced_box), GTK_WIDGET(ui->watchdog));
     gtk_expander_set_child(GTK_EXPANDER(advanced), advanced_box);
     gtk_box_append(GTK_BOX(form), advanced);

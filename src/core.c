@@ -80,6 +80,8 @@ static char *kind_for(const char *path) {
     char line[4096] = {0};
     FILE *file = g_fopen(path, "r");
     if (file) { if (!fgets(line, sizeof line, file)) line[0] = '\0'; fclose(file); }
+    /* Self-contained .run launchers often use a shell header but exec a long-lived app. */
+    if (g_str_has_suffix(path, ".run") && g_file_test(path, G_FILE_TEST_IS_EXECUTABLE)) return g_strdup("program");
     if (!memcmp(line, "\177ELF", 4) || g_str_has_suffix(path, ".AppImage")) return g_strdup("program");
     if (g_str_has_prefix(line, "#!") || g_str_has_suffix(path, ".sh") || g_str_has_suffix(path, ".py")) return g_strdup("script");
     return g_strdup(g_file_test(path, G_FILE_TEST_IS_EXECUTABLE) ? "program" : "document");
@@ -226,6 +228,12 @@ GSubprocess *ls_spawn(GKeyFile *key, GError **error) {
     g_autofree char *cwd = value(key, "Path");
     g_autoptr(GSubprocessLauncher) launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_NONE);
     if (cwd && *cwd) g_subprocess_launcher_set_cwd(launcher, cwd);
+    g_autofree char *kind = value(key, LS_KIND);
+    g_autofree char *source = value(key, LS_SOURCE);
+    if (!g_strcmp0(kind, "program") && source && g_str_has_suffix(source, ".run")) {
+        g_autofree char *canonical = g_canonicalize_filename(source, NULL);
+        g_subprocess_launcher_setenv(launcher, "LOGIN_STARTUP_WATCHDOG_SOURCE", canonical, TRUE);
+    }
     return g_subprocess_launcher_spawnv(launcher, (const char * const *)argv, error);
 }
 gboolean ls_run(GKeyFile *key, GError **error) {
@@ -284,6 +292,113 @@ gboolean ls_watchdog_supported(GKeyFile *key) {
     if (g_strcmp0(kind, "program") && g_strcmp0(kind, "desktop")) return FALSE;
     g_autofree char *executable = resolved_watchdog_executable(key);
     return executable && g_file_test(executable, G_FILE_TEST_IS_EXECUTABLE);
+}
+
+typedef struct {
+    off_t size;
+    time_t mtime;
+    time_t ctime;
+    char *digest;
+} RunFileIdentity;
+
+static GHashTable *run_file_identities;
+
+static void run_file_identity_free(RunFileIdentity *identity) {
+    if (!identity) return;
+    g_free(identity->digest);
+    g_free(identity);
+}
+
+static void run_file_payload_range(const char *path, off_t file_size, off_t *start, off_t *length) {
+    *start = 0;
+    *length = file_size;
+    FILE *file = g_fopen(path, "rb");
+    if (!file) return;
+    char header[65537];
+    size_t size = fread(header, 1, sizeof header - 1, file);
+    fclose(file);
+    header[size] = '\0';
+    /* Self-extracting launchers have binary payload bytes in this header buffer. */
+    g_autoptr(GRegex) regex = g_regex_new("tail[ \\t]+-c[ \\t]+\\+([0-9]+)[^\\n]*head[ \\t]+-c[ \\t]+([0-9]+)", G_REGEX_RAW, 0, NULL);
+    if (!regex) return;
+    g_autoptr(GMatchInfo) match = NULL;
+    if (!g_regex_match(regex, header, 0, &match)) return;
+    g_autofree char *offset_text = g_match_info_fetch(match, 1);
+    g_autofree char *length_text = g_match_info_fetch(match, 2);
+    char *end = NULL;
+    guint64 offset = g_ascii_strtoull(offset_text, &end, 10);
+    if (!end || *end || offset < 1) return;
+    guint64 payload_size = g_ascii_strtoull(length_text, &end, 10);
+    if (!end || *end || !payload_size || offset - 1 > G_MAXUINT64 - payload_size) return;
+    guint64 payload_start = offset - 1;
+    if (payload_start + payload_size > (guint64)file_size) return;
+    *start = (off_t)payload_start;
+    *length = (off_t)payload_size;
+}
+
+static char *run_file_digest(const char *path) {
+    struct stat st;
+    if (g_stat(path, &st) != 0 || !S_ISREG(st.st_mode)) return NULL;
+    off_t payload_start = 0, payload_length = st.st_size;
+    run_file_payload_range(path, st.st_size, &payload_start, &payload_length);
+    if (!run_file_identities)
+        run_file_identities = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                                     (GDestroyNotify)run_file_identity_free);
+    RunFileIdentity *cached = g_hash_table_lookup(run_file_identities, path);
+    if (cached && cached->size == st.st_size && cached->mtime == st.st_mtime && cached->ctime == st.st_ctime)
+        return g_strdup(cached->digest);
+    FILE *file = g_fopen(path, "rb");
+    if (!file) return NULL;
+    if (fseeko(file, payload_start, SEEK_SET) != 0) { fclose(file); return NULL; }
+    GChecksum *checksum = g_checksum_new(G_CHECKSUM_SHA256);
+    guchar buffer[64 * 1024];
+    size_t count;
+    off_t remaining = payload_length;
+    while (remaining > 0 && (count = fread(buffer, 1, MIN(sizeof buffer, (gsize)remaining), file)) > 0) {
+        g_checksum_update(checksum, buffer, count);
+        remaining -= count;
+    }
+    gboolean failed = ferror(file) != 0;
+    fclose(file);
+    if (failed || remaining > 0) { g_checksum_free(checksum); return NULL; }
+    RunFileIdentity *identity = g_new0(RunFileIdentity, 1);
+    identity->size = st.st_size;
+    identity->mtime = st.st_mtime;
+    identity->ctime = st.st_ctime;
+    identity->digest = g_strdup(g_checksum_get_string(checksum));
+    g_checksum_free(checksum);
+    g_hash_table_replace(run_file_identities, g_strdup(path), identity);
+    return g_strdup(identity->digest);
+}
+
+static gboolean run_files_match(const char *source, const char *candidate) {
+    if (!g_strcmp0(source, candidate)) return TRUE;
+    g_autofree char *source_digest = run_file_digest(source);
+    if (!source_digest) return FALSE;
+    g_autofree char *candidate_digest = run_file_digest(candidate);
+    return candidate_digest && !g_strcmp0(source_digest, candidate_digest);
+}
+
+static gboolean process_has_env_path(const char *process_dir, const char *source, const char *canonical) {
+    g_autofree char *env_path = g_build_filename(process_dir, "environ", NULL);
+    g_autofree char *contents = NULL;
+    gsize length = 0;
+    if (!g_file_get_contents(env_path, &contents, &length, NULL)) return FALSE;
+    for (gsize offset = 0; offset < length;) {
+        const char *entry = contents + offset;
+        gsize entry_len = strnlen(entry, length - offset);
+        const char *equals = memchr(entry, '=', entry_len);
+        if (equals) {
+            const char *env_value = equals + 1;
+            if (!strcmp(env_value, canonical)) return TRUE;
+            if (g_path_is_absolute(env_value) && g_str_has_suffix(env_value, ".run")) {
+                gboolean matches = run_files_match(source, env_value);
+                if (matches) return TRUE;
+            }
+        }
+        offset += entry_len + 1;
+    }
+    return FALSE;
 }
 
 static char *watchdog_autostart_path(void) {
@@ -390,7 +505,7 @@ gboolean ls_watchdog_set(const char *id, gboolean enabled, GError **error) {
     if (!item) return FALSE;
     if (enabled && !ls_watchdog_supported(item->key)) {
         ls_item_free(item);
-        return fail(error, "看门狗支持直接启动的程序和可识别进程的应用快捷方式，不支持脚本或包装命令");
+        return fail(error, "看门狗支持直接启动的程序、可识别进程的应用快捷方式，以及有执行权限的 .run 启动器");
     }
     if (enabled && g_key_file_get_boolean(item->key, LS_GROUP, "Hidden", NULL)) {
         ls_item_free(item);
@@ -479,6 +594,8 @@ static gboolean process_matches(GKeyFile *key) {
                 if (arg_len == strlen(canonical) && !memcmp(arg, canonical, arg_len)) return TRUE;
                 i += arg_len + 1;
             }
+            if (!g_strcmp0(kind, "program") && g_str_has_suffix(source, ".run") &&
+                process_has_env_path(process_dir, source, canonical)) return TRUE;
         } else {
             g_autofree char *cmdline = g_build_filename(process_dir, "cmdline", NULL);
             g_autofree char *contents = NULL;
@@ -593,6 +710,10 @@ int ls_watchdog_run(void) {
     g_hash_table_unref(watchdog.states);
     g_main_loop_unref(watchdog.loop);
     close(watchdog.lock_fd);
+    if (run_file_identities) {
+        g_hash_table_unref(run_file_identities);
+        run_file_identities = NULL;
+    }
     return 0;
 }
 

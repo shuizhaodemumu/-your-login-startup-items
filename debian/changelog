@@ -1,3 +1,10 @@
+login-startup (0.2.2) unstable; urgency=medium
+
+  * Support watchdog monitoring for executable .run application launchers.
+  * Track wrapped .run processes through preserved source paths in their environment.
+
+ -- Local Desktop Tools <local@example.invalid>  Fri, 23 Oct 2026 12:00:00 +0800
+
 login-startup (0.2.1) unstable; urgency=medium
 
   * Leave all installed-app shortcut choices unchecked by default.

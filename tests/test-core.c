@@ -214,6 +214,12 @@ static void watchdog_desktop_eligibility(void) {
     g_autoptr(GKeyFile) script_key = draft(script, NULL);
     g_assert_false(ls_watchdog_supported(script_key));
 }
+static void watchdog_run_eligibility(void) {
+    g_autofree char *run = new_file("bundle.run", "#!/bin/sh\nexec sleep 60\n", 0700);
+    g_autoptr(GKeyFile) key = draft(run, NULL);
+    g_assert_cmpstr(keystr(key, LS_KIND), ==, "program");
+    g_assert_true(ls_watchdog_supported(key));
+}
 static void watchdog_duplicate_target_rejected(void) {
     g_autofree char *program = g_build_filename(root, "same-app", NULL);
     g_autofree char *binary = NULL; gsize binary_len = 0;
@@ -269,6 +275,7 @@ int main(int argc, char **argv) {
     g_test_add_func("/startup/desktop-shortcut-copy", desktop_shortcut_copy);
     g_test_add_func("/startup/watchdog-setup-and-autostart", watchdog_setup_and_autostart);
     g_test_add_func("/startup/watchdog-desktop-eligibility", watchdog_desktop_eligibility);
+    g_test_add_func("/startup/watchdog-run-eligibility", watchdog_run_eligibility);
     g_test_add_func("/startup/watchdog-duplicate-target-rejected", watchdog_duplicate_target_rejected);
     int result = g_test_run();
     g_print("Isolated test fixtures: %s\n", root);

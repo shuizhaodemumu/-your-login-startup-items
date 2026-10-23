@@ -15,7 +15,7 @@
 - 添加启动项只读取配置并保存快捷方式，不会运行所选文件。
 - 只管理本软件创建的启动项。删除启动配置不会删除原文件。
 
-应用扫描只包含 `/usr/share/applications` 中由当前已安装 deb 包拥有、且具有可显示启动器的图形应用。库、命令行工具和没有桌面启动器的包无法自动生成可靠的桌面快捷方式。看门狗只支持直接启动的可执行程序和命令可识别的 `.desktop` 应用；脚本、`env`/Shell 包装命令和无法匹配实际进程的启动器不能启用。手动关闭受监控程序也会触发重启；可随时关闭对应看门狗。
+应用扫描只包含 `/usr/share/applications` 中由当前已安装 deb 包拥有、且具有可显示启动器的图形应用。库、命令行工具和没有桌面启动器的包无法自动生成可靠的桌面快捷方式。看门狗支持直接启动的可执行程序、命令可识别的 `.desktop` 应用，以及有执行权限的 `.run` 启动器；`.run` 启动器须在进程命令行或环境变量中保留来源路径，助手才能准确识别其进程。脚本和 `env`/Shell 包装命令仍不支持。手动关闭受监控程序也会触发重启；可随时关闭对应看门狗。
 
 ## 系统要求
 
@@ -28,7 +28,7 @@
 ```sh
 sudo apt install build-essential meson ninja-build libgtk-4-dev libadwaita-1-dev desktop-file-utils dpkg-dev
 sh packaging/build-deb.sh
-sudo apt install ./dist/login-startup_0.2.1_amd64.deb
+sudo apt install ./dist/login-startup_0.2.2_amd64.deb
 ```
 
 运行 `login-startup`，或从应用程序菜单打开“你的登录启动项”。安装包面向 Ubuntu 26.04 LTS，不承诺兼容更早版本。
