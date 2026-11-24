@@ -4,6 +4,18 @@
 
 [English](README.md)
 
+## Windows 版：玲珑守护
+
+Windows 版现已提供，正式名称为 **玲珑守护**，沿用紫色小龙娘「玲珑」主题。支持拖入 `.exe` / `.lnk` 图标、登录自启、程序退出拉起，以及连续无响应 10 秒后的强制重启和窗口状态恢复。
+
+**[下载 Windows 1.0.0](https://github.com/shuizhaodemumu/-your-login-startup-items/releases/tag/windows-v1.0.0)** · [Windows 使用说明与源码](windows/README.md) · [发布说明](windows/RELEASE_NOTES_1.0.0.md) · [验证范围](windows/VALIDATION.md)
+
+适用于 Windows 10/11 x64，需要 .NET Framework 4.8。完整解压程序包后运行 `LinglongGuard.exe`。未保存文档、标签页和会话由目标软件自身恢复。
+
+![玲珑守护 Windows 界面](windows/docs/screenshot.png)
+
+以下章节介绍 Ubuntu GTK4 版；两个平台分别维护版本号和功能说明。
+
 ## 功能
 
 - 将本机程序、脚本、文档和现有 `.desktop` 快捷方式加入当前用户的登录启动列表。

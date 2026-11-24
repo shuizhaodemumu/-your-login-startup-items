@@ -4,6 +4,16 @@ A native GTK4 desktop app for managing files that start automatically when you s
 
 [简体中文](README.zh-CN.md)
 
+## Windows edition: Linglong Guard
+
+The Windows edition is available as **Linglong Guard (玲珑守护)**, with a purple dragon-girl interface, drag-and-drop EXE/LNK import, login startup, process-exit recovery, and a 10-second unresponsive-window watchdog.
+
+**[Download Windows 1.0.0](https://github.com/shuizhaodemumu/-your-login-startup-items/releases/tag/windows-v1.0.0)** · [Windows guide and source](windows/README.md) · [Release notes](windows/RELEASE_NOTES_1.0.0.md) · [Validation](windows/VALIDATION.md)
+
+Requires Windows 10/11 x64 and .NET Framework 4.8. Extract the full ZIP and run `LinglongGuard.exe`. Unsaved documents and application sessions require the target application's own recovery support.
+
+The sections below describe the Ubuntu GTK4 edition.
+
 ## Features
 
 - Add local programs, scripts, documents, and existing `.desktop` launchers to your per-user login startup list.
